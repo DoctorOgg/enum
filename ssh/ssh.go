@@ -119,8 +119,6 @@ func SSHCommandStream(host, command string) error {
 	return nil
 }
 
-// SSHInteractiveShell starts a fully interactive shell session on the remote host via SSH
-// If command is provided, it will be executed in the shell session.
 func SSHInteractiveShell(host string, command string) error {
 	// Get the current system user
 	currentUser, err := user.Current()
@@ -190,11 +188,18 @@ func SSHInteractiveShell(host string, command string) error {
 		return fmt.Errorf("failed to start shell: %s", err)
 	}
 
-	// Forward local stdin to remote stdin
+	// Forward local stdin to remote stdin and send command if provided
 	go func() {
 		defer stdinPipe.Close()
-		_, err = io.Copy(stdinPipe, os.Stdin)
-		if err != nil {
+		if command != "" {
+			// Send the command followed by a newline
+			if _, err := fmt.Fprintln(stdinPipe, command); err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to send command:", err)
+				return
+			}
+		}
+		// Continue to pass local stdin to remote stdin
+		if _, err := io.Copy(stdinPipe, os.Stdin); err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to forward local stdin:", err)
 		}
 	}()

@@ -261,9 +261,7 @@ func shell(containerID string) error {
 		if output != "" {
 			fmt.Printf("Container %s found on instance %s (%s)\n", containerID, instance.Name, instance.InstanceID)
 			// Start an interactive shell session in the container
-			// err := ssh.SSHInteractiveShell(instance.PrivateIP, fmt.Sprintf("sudo docker exec -it %s /bin/sh", containerID))
-			err := ssh.SSHInteractiveShell(instance.PrivateIP, "/bin/bash")
-
+			err := ssh.SSHInteractiveShell(instance.PrivateIP, fmt.Sprintf("sudo docker exec -it %s /bin/sh", containerID))
 			if err != nil {
 				log.Printf("Error starting interactive shell session: %v", err)
 			}
