@@ -4,6 +4,7 @@ go 1.21.0
 
 require (
 	github.com/aws/aws-sdk-go v1.52.0
+	github.com/jlandowner/go-interactive-ssh v0.0.0-20240107104616-870518dfe9fb
 	github.com/spf13/cobra v1.8.0
 	golang.org/x/crypto v0.22.0
 )

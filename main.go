@@ -232,15 +232,8 @@ func followContainerLogs(containerID string) error {
 	return nil
 }
 
-// func shell(containerID string) error {
-// 	// GPT: This function should ssh to each machien in the cluster, and search for a running container with the given ID
-// 	// If found, it should start an interactive shell session in that container
-// 	// all commands will need sudo, and assume the default shell is /bin/sh
-// 	// see the find function to find the container, and use the SSHInteractiveShell function you just wrote, that is no part of the ssh package
-
-// }
-
 func shell(containerID string) error {
+
 	// Fetch EC2 instances for the specified cluster
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
 	if err != nil {
@@ -266,9 +259,11 @@ func shell(containerID string) error {
 
 		// If the container is found on this instance, start an interactive shell session
 		if output != "" {
-			fmt.Printf("Container found on instance %s (%s)\n", instance.InstanceID, instance.Name)
+			fmt.Printf("Container %s found on instance %s (%s)\n", containerID, instance.Name, instance.InstanceID)
 			// Start an interactive shell session in the container
-			err := ssh.SSHInteractiveShell(instance.PrivateIP, fmt.Sprintf("sudo docker exec -it %s /bin/sh", containerID))
+			// err := ssh.SSHInteractiveShell(instance.PrivateIP, fmt.Sprintf("sudo docker exec -it %s /bin/sh", containerID))
+			err := ssh.SSHInteractiveShell(instance.PrivateIP, "/bin/bash")
+
 			if err != nil {
 				log.Printf("Error starting interactive shell session: %v", err)
 			}

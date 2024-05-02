@@ -3,12 +3,14 @@ package ssh
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/user"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/term"
 )
 
 // SSHCommand executes a command on a remote host using SSH with the SSH agent and returns the output
@@ -159,16 +161,28 @@ func SSHInteractiveShell(host string, command string) error {
 	}
 	defer session.Close()
 
-	// Set up terminal modes
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
+	// Request pseudo terminal
+	if err := session.RequestPty("xterm", 80, 40, ssh.TerminalModes{
+		ssh.ECHO:          0,     // Disable echoing
+		ssh.TTY_OP_ISPEED: 14400, // Set input speed
+		ssh.TTY_OP_OSPEED: 14400, // Set output speed
+	}); err != nil {
+		return fmt.Errorf("request for pseudo terminal failed: %s", err)
 	}
 
-	// Request pseudo terminal
-	if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
-		return fmt.Errorf("request for pseudo terminal failed: %s", err)
+	// Save old terminal state and disable local echo
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to make terminal raw: %v", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Setup input and output to connect local and remote terminals
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %v", err)
 	}
 
 	// Start remote shell
@@ -176,23 +190,14 @@ func SSHInteractiveShell(host string, command string) error {
 		return fmt.Errorf("failed to start shell: %s", err)
 	}
 
-	// Get a write-only pipe to write to the SSH session's standard input
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdin pipe: %v", err)
-	}
-	defer stdin.Close()
-
-	// If a command is provided, execute it in the shell session
-	if command != "" {
-		if _, err := stdin.Write([]byte(command + "\n")); err != nil {
-			return fmt.Errorf("failed to write command: %s", err)
+	// Forward local stdin to remote stdin
+	go func() {
+		defer stdinPipe.Close()
+		_, err = io.Copy(stdinPipe, os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to forward local stdin:", err)
 		}
-	}
-
-	// Set up terminal input/output streams
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
+	}()
 
 	// Wait for the session to exit
 	err = session.Wait()
