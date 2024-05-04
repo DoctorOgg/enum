@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"enum/aws"
 	"enum/ssh"
@@ -110,12 +111,16 @@ func main() {
 	rootCmd.AddCommand(logsCmd)
 
 	shellCmd := &cobra.Command{
-		Use:   "shell [container-id]",
-		Short: "Start an interactive shell session in a specified container",
-		Args:  cobra.ExactArgs(1),
+		Use:   "shell [container-id] [shell]",
+		Short: "Start an interactive shell session in a specified container with an optional shell",
+		Args:  cobra.RangeArgs(1, 2), // Requires at least one argument, up to two
 		Run: func(cmd *cobra.Command, args []string) {
 			containerID := args[0]
-			if err := shell(containerID); err != nil {
+			var shellOpt string
+			if len(args) > 1 {
+				shellOpt = args[1]
+			}
+			if err := shell(containerID, shellOpt); err != nil {
 				log.Fatalf("Failed to start interactive session: %v", err)
 			}
 		},
@@ -155,54 +160,71 @@ func find(searchTerm string) {
 			var cmd string
 			if searchTerm == "" {
 				cmd = "sudo docker ps --format '{{.ID}} {{.Status}} {{.RunningFor}} {{.Names}}'"
+
 			} else {
+				// clean up the search term
+				searchTerm = strings.Replace(searchTerm, " ", "", -1)
 				cmd = fmt.Sprintf("sudo docker ps --format '{{.ID}} {{.Status}} {{.RunningFor}} {{.Names}}'  | grep '%s'", searchTerm)
 			}
-			output, err := ssh.SSHCommand(instance.PrivateIP, cmd)
+			output, err := ssh.SSHCommand(instance.PrivateIP, cmd, false, true)
 			if err != nil {
-				log.Printf("Error executing command on instance %s: %v", instance.InstanceID, err)
+
+				fmt.Println(err)
+			}
+			if err != nil {
+				log.Printf("Error executing command on instance %s: %v", instance.Name, err)
 				continue
 			}
 			fmt.Printf("---------- %s ----------\n", instance.Name)
-			fmt.Printf(output)
+			fmt.Print(output)
 		}
 	}
 }
 
 func inspectContainer(containerID string) error {
+	// Fetch the list of EC2 instances in the cluster.
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}
 
-	found := false
 	for _, instance := range instances {
 		if instance.PrivateIP == "" {
 			continue
 		}
-		cmd := fmt.Sprintf("sudo docker inspect %s", containerID)
-		output, err := ssh.SSHCommand(instance.PrivateIP, cmd)
+
+		// Check if the container is running on the instance.
+		checkCmd := fmt.Sprintf("sudo docker ps --filter \"id=%s\" --format '{{.ID}}'", containerID)
+		checkOutput, err := ssh.SSHCommand(instance.PrivateIP, checkCmd, false, false)
 		if err != nil {
-			log.Printf("Error executing command on instance %s: %v", instance.InstanceID, err)
+			log.Printf("Error checking container on instance %s: %v", instance.InstanceID, err)
 			continue
 		}
-		if output != "" {
+		if checkOutput == "" {
+			continue // No container with the specified ID was found on this host.
+		}
+
+		// If the container ID matches the expected ID, inspect it.
+		inspectCmd := fmt.Sprintf("sudo docker inspect %s", containerID)
+		inspectOutput, err := ssh.SSHCommand(instance.PrivateIP, inspectCmd, false, false)
+		if err != nil {
+			log.Printf("Error executing inspect on instance %s: %v", instance.InstanceID, err)
+			continue
+		}
+
+		if inspectOutput != "" {
 			fmt.Printf("---------- Inspect output from %s ----------\n", instance.Name)
-			fmt.Println(output)
-			found = true
-			break
+			fmt.Println(inspectOutput)
+			return nil // Stop after successful inspection, as only one such container should exist.
 		}
 	}
 
-	if !found {
-		fmt.Println("Container not found on any instance.")
-		return nil
-	}
-
+	fmt.Println("Container not found on any instance.")
 	return nil
 }
 
 func followContainerLogs(containerID string) error {
+	// Fetch the list of EC2 instances in the cluster.
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
@@ -213,12 +235,25 @@ func followContainerLogs(containerID string) error {
 		if instance.PrivateIP == "" {
 			continue
 		}
-		cmd := fmt.Sprintf("sudo docker logs -f %s", containerID)
+
+		// Check if the container is running on the instance.
+		checkCmd := fmt.Sprintf("sudo docker ps --filter \"id=%s\" --format '{{.ID}}'", containerID)
+		checkOutput, err := ssh.SSHCommand(instance.PrivateIP, checkCmd, false, false)
+		if err != nil {
+			log.Printf("Error checking container on instance %s: %v", instance.InstanceID, err)
+			continue
+		}
+		if checkOutput == "" {
+			continue // No container with the specified ID was found on this host.
+		}
+
+		// If the container ID matches the expected ID, follow its logs.
+		logCmd := fmt.Sprintf("sudo docker logs -f %s", containerID)
 		fmt.Printf("Attempting to follow logs on instance %s (%s)\n", instance.InstanceID, instance.Name)
 		// Execute SSH command to follow logs, streaming directly to console
-		err := ssh.SSHCommandStream(instance.PrivateIP, cmd)
-		if err != nil {
-			log.Printf("Error executing command on instance %s: %v", instance.InstanceID, err)
+		logErr := ssh.SSHCommandStream(instance.PrivateIP, logCmd)
+		if logErr != nil {
+			log.Printf("Error executing command on instance %s: %v", instance.InstanceID, logErr)
 			continue
 		}
 		found = true
@@ -232,12 +267,17 @@ func followContainerLogs(containerID string) error {
 	return nil
 }
 
-func shell(containerID string) error {
-
+func shell(containerID string, specifiedShell ...string) error {
 	// Fetch EC2 instances for the specified cluster
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
+	}
+
+	// Determine the shell to use
+	shellToUse := "/bin/sh" // default shell
+	if len(specifiedShell) > 0 && specifiedShell[0] != "" {
+		shellToUse = specifiedShell[0]
 	}
 
 	// Flag to indicate if the container was found
@@ -250,8 +290,8 @@ func shell(containerID string) error {
 		}
 
 		// SSH command to search for the container
-		cmd := fmt.Sprintf("sudo docker ps -q --filter id=%s", containerID)
-		output, err := ssh.SSHCommand(instance.PrivateIP, cmd)
+		checkCmd := fmt.Sprintf("sudo docker ps --filter \"id=%s\" --format '{{.ID}}'", containerID)
+		output, err := ssh.SSHCommand(instance.PrivateIP, checkCmd, false, false)
 		if err != nil {
 			log.Printf("Error executing command on instance %s: %v", instance.InstanceID, err)
 			continue
@@ -259,11 +299,13 @@ func shell(containerID string) error {
 
 		// If the container is found on this instance, start an interactive shell session
 		if output != "" {
-			fmt.Printf("Container %s found on instance %s (%s)\n", containerID, instance.Name, instance.InstanceID)
+			fmt.Printf("Container %s found on instance %s (%s). Starting shell session...\n", containerID, instance.InstanceID, instance.Name)
 			// Start an interactive shell session in the container
-			err := ssh.SSHInteractiveShell(instance.PrivateIP, fmt.Sprintf("sudo docker exec -it %s /bin/sh", containerID))
+			shellCmd := fmt.Sprintf("sudo docker exec -it %s %s", containerID, shellToUse)
+			err := ssh.SSHInteractiveShell(instance.PrivateIP, shellCmd)
 			if err != nil {
 				log.Printf("Error starting interactive shell session: %v", err)
+				continue
 			}
 			found = true
 			break

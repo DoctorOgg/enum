@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 
 	"text/tabwriter"
 
@@ -120,6 +121,11 @@ func FetchEC2InstanceData(clusterName string, awsProfile string) ([]InstanceData
 			})
 		}
 	}
+
+	// Sorting instances by Name
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].Name < instances[j].Name
+	})
 
 	return instances, nil
 }

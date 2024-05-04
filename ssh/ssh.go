@@ -3,7 +3,6 @@ package ssh
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/user"
@@ -14,7 +13,7 @@ import (
 )
 
 // SSHCommand executes a command on a remote host using SSH with the SSH agent and returns the output
-func SSHCommand(host, command string) (string, error) {
+func SSHCommand(host, command string, verbose, ignoreExitCode bool) (string, error) {
 	// Get the current system user
 	currentUser, err := user.Current()
 	if err != nil {
@@ -40,26 +39,48 @@ func SSHCommand(host, command string) (string, error) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: Insecure; see below for production recommendation
 	}
 
+	if verbose {
+		fmt.Printf("Attempting to connect to SSH host %s@%s\n", currentUser.Username, host)
+	}
+
 	// Establish the SSH connection
 	conn, err := ssh.Dial("tcp", host+":22", config)
 	if err != nil {
-		return "", fmt.Errorf("failed to dial: %v", err)
+		return "", fmt.Errorf("failed to dial SSH: %v", err)
 	}
 	defer conn.Close()
+
+	if verbose {
+		fmt.Println("SSH connection established")
+	}
 
 	// Create a new SSH session
 	session, err := conn.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to create session: %v", err)
+		return "", fmt.Errorf("failed to create SSH session: %v", err)
 	}
 	defer session.Close()
 
+	if verbose {
+		fmt.Printf("Running command: %s\n", command)
+	}
+
 	// Capture the output of the remote command
-	var stdoutBuf bytes.Buffer
+	var stdoutBuf, stderrBuf bytes.Buffer
 	session.Stdout = &stdoutBuf
+	session.Stderr = &stderrBuf
 	err = session.Run(command)
+
 	if err != nil {
-		return "", fmt.Errorf("failed to run command: %v", err)
+		_, ok := err.(*ssh.ExitError)
+		if ok && ignoreExitCode {
+			// If ignoring exit codes, return the output anyway
+			if verbose {
+				fmt.Println("Ignoring failed exit code")
+			}
+			return stdoutBuf.String(), nil
+		}
+		return "", fmt.Errorf("failed to run command '%s': %v\nStderr: %s", command, err, stderrBuf.String())
 	}
 
 	return stdoutBuf.String(), nil
@@ -120,13 +141,11 @@ func SSHCommandStream(host, command string) error {
 }
 
 func SSHInteractiveShell(host string, command string) error {
-	// Get the current system user
 	currentUser, err := user.Current()
 	if err != nil {
 		return fmt.Errorf("unable to get current user: %v", err)
 	}
 
-	// Connect to the SSH agent
 	sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
 	if err != nil {
 		return fmt.Errorf("failed to connect to SSH agent: %v", err)
@@ -136,78 +155,66 @@ func SSHInteractiveShell(host string, command string) error {
 	agentClient := agent.NewClient(sshAgent)
 	authMethod := ssh.PublicKeysCallback(agentClient.Signers)
 
-	// Set up the SSH client configuration
 	config := &ssh.ClientConfig{
 		User: currentUser.Username,
 		Auth: []ssh.AuthMethod{
 			authMethod,
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: Insecure; should implement proper host key checking
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	// Establish the SSH connection
 	conn, err := ssh.Dial("tcp", host+":22", config)
 	if err != nil {
 		return fmt.Errorf("failed to dial: %v", err)
 	}
 	defer conn.Close()
 
-	// Create a new SSH session
 	session, err := conn.NewSession()
 	if err != nil {
 		return fmt.Errorf("failed to create session: %v", err)
 	}
 	defer session.Close()
 
-	// Request pseudo terminal
-	if err := session.RequestPty("xterm", 80, 40, ssh.TerminalModes{
-		ssh.ECHO:          0,     // Disable echoing
-		ssh.TTY_OP_ISPEED: 14400, // Set input speed
-		ssh.TTY_OP_OSPEED: 14400, // Set output speed
-	}); err != nil {
-		return fmt.Errorf("request for pseudo terminal failed: %s", err)
+	// This checks if the input is a terminal
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fd := int(os.Stdin.Fd())
+		state, err := term.MakeRaw(fd)
+		if err != nil {
+			return fmt.Errorf("failed to make terminal raw: %v", err)
+		}
+		defer term.Restore(fd, state)
+
+		w, h, err := term.GetSize(fd)
+		if err != nil {
+			return fmt.Errorf("failed to get terminal size: %v", err)
+		}
+
+		if err := session.RequestPty("xterm", h, w, ssh.TerminalModes{
+			ssh.ECHO:          1,     // enable echoing
+			ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
+			ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+		}); err != nil {
+			return fmt.Errorf("request for pseudo terminal failed: %s", err)
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "Warning: The input device is not a TTY. Interactive session may not behave as expected.")
 	}
 
-	// Save old terminal state and disable local echo
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return fmt.Errorf("failed to make terminal raw: %v", err)
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// Setup input and output to connect local and remote terminals
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
-	stdinPipe, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdin pipe: %v", err)
-	}
+	session.Stdin = os.Stdin
 
-	// Start remote shell
-	if err := session.Shell(); err != nil {
-		return fmt.Errorf("failed to start shell: %s", err)
-	}
-
-	// Forward local stdin to remote stdin and send command if provided
-	go func() {
-		defer stdinPipe.Close()
-		if command != "" {
-			// Send the command followed by a newline
-			if _, err := fmt.Fprintln(stdinPipe, command); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to send command:", err)
-				return
-			}
+	if command != "" {
+		if err := session.Run(command); err != nil {
+			return fmt.Errorf("failed to run command: %v", err)
 		}
-		// Continue to pass local stdin to remote stdin
-		if _, err := io.Copy(stdinPipe, os.Stdin); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to forward local stdin:", err)
+	} else {
+		if err := session.Shell(); err != nil {
+			return fmt.Errorf("failed to start shell: %v", err)
 		}
-	}()
-
-	// Wait for the session to exit
-	err = session.Wait()
-	if err != nil {
-		return fmt.Errorf("error waiting for SSH session: %v", err)
+		if err := session.Wait(); err != nil {
+			return fmt.Errorf("shell exited with error: %v", err)
+		}
 	}
 
 	return nil
