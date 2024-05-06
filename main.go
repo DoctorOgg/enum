@@ -155,28 +155,56 @@ func find(searchTerm string) {
 		log.Fatalf("Error fetching instances: %v", err)
 	}
 
+	// Define column widths.
+	const (
+		instanceWidth   = 20
+		idWidth         = 12
+		statusWidth     = 12
+		runningForWidth = 15
+		nameWidth       = 60
+	)
+
+	// Print the table header with fixed width for each column.
+	fmt.Printf("%-*s %-*s %-*s %-*s %-*s\n",
+		instanceWidth, "EC2 Instance",
+		idWidth, "Container ID",
+		statusWidth, "Status",
+		runningForWidth, "Running For",
+		nameWidth, "Container Name")
+
 	for _, instance := range instances {
-		if instance.PrivateIP != "" { // assuming SSH is possible
-			var cmd string
-			if searchTerm == "" {
-				cmd = "sudo docker ps --format '{{.ID}} {{.Status}} {{.RunningFor}} {{.Names}}'"
+		if instance.PrivateIP == "" {
+			continue // Skip if no SSH access
+		}
 
-			} else {
-				// clean up the search term
-				searchTerm = strings.Replace(searchTerm, " ", "", -1)
-				cmd = fmt.Sprintf("sudo docker ps --format '{{.ID}} {{.Status}} {{.RunningFor}} {{.Names}}'  | grep '%s'", searchTerm)
-			}
-			output, err := ssh.SSHCommand(instance.PrivateIP, cmd, false, true)
-			if err != nil {
+		var cmd string
+		if searchTerm == "" {
+			cmd = "sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}'"
+		} else {
+			cleanedSearchTerm := strings.ReplaceAll(searchTerm, " ", "")
+			cmd = fmt.Sprintf("sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}' | grep '%s'", cleanedSearchTerm)
+		}
 
-				fmt.Println(err)
+		// Execute the command and collect output
+		output, err := ssh.SSHCommand(instance.PrivateIP, cmd, false, true)
+		if err != nil {
+			log.Printf("Error executing command on instance %s: %v", instance.Name, err)
+			continue
+		}
+
+		// Split output by lines and format each line according to defined widths
+		for _, line := range strings.Split(output, "\n") {
+			if line != "" {
+				parts := strings.Split(line, "\t")
+				if len(parts) >= 4 { // Ensure the line has all expected fields to prevent errors
+					fmt.Printf("%-*s %-*s %-*s %-*s %-*s\n",
+						instanceWidth, instance.Name,
+						idWidth, parts[1],
+						statusWidth, parts[2],
+						runningForWidth, parts[3],
+						nameWidth, parts[0])
+				}
 			}
-			if err != nil {
-				log.Printf("Error executing command on instance %s: %v", instance.Name, err)
-				continue
-			}
-			fmt.Printf("---------- %s ----------\n", instance.Name)
-			fmt.Print(output)
 		}
 	}
 }
