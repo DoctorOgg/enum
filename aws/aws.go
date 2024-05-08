@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 
 	"text/tabwriter"
 
@@ -41,11 +42,21 @@ func ListECSClusters(awsProfile string) error {
 		return fmt.Errorf("failed to list clusters: %v", err)
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Cluster ARN\t")
-	fmt.Fprintln(w, "-----------\t")
+	// Extract and sort cluster names from ARNs
+	var clusterNames []string
 	for _, arn := range result.ClusterArns {
-		fmt.Fprintf(w, "%s\t\n", *arn)
+		splitARN := strings.Split(*arn, "/")
+		name := splitARN[len(splitARN)-1] // Assumes the cluster name is the last segment of the ARN
+		clusterNames = append(clusterNames, name)
+	}
+	sort.Strings(clusterNames) // Sort the cluster names alphabetically
+
+	// Output the cluster names in a table format
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Cluster Name\t")
+	fmt.Fprintln(w, "-------------\t")
+	for _, name := range clusterNames {
+		fmt.Fprintf(w, "%s\t\n", name)
 	}
 	w.Flush()
 
