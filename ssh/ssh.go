@@ -140,7 +140,7 @@ func SSHCommandStream(host, command string) error {
 	return nil
 }
 
-func SSHInteractiveShell(host string, command string) error {
+func SSHInteractiveShell(host string, containerID string, command string) error {
 	currentUser, err := user.Current()
 	if err != nil {
 		return fmt.Errorf("unable to get current user: %v", err)
@@ -204,8 +204,11 @@ func SSHInteractiveShell(host string, command string) error {
 	session.Stderr = os.Stderr
 	session.Stdin = os.Stdin
 
-	if command != "" {
-		if err := session.Run(command); err != nil {
+	// Concatenate shell command with arguments
+	fullCommand := fmt.Sprintf("sudo docker exec -it %s %s", containerID, command)
+
+	if fullCommand != "" {
+		if err := session.Run(fullCommand); err != nil {
 			return fmt.Errorf("failed to run command: %v", err)
 		}
 	} else {

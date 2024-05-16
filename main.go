@@ -111,21 +111,17 @@ func main() {
 	rootCmd.AddCommand(logsCmd)
 
 	shellCmd := &cobra.Command{
-		Use:   "shell [container-id] [shell]",
+		Use:   "shell [container-id] [shell] [args...]",
 		Short: "Start an interactive shell session in a specified container with an optional shell",
-		Args:  cobra.RangeArgs(1, 2), // Requires at least one argument, up to two
+		Args:  cobra.MinimumNArgs(1), // Requires at least one argument
 		Run: func(cmd *cobra.Command, args []string) {
 			containerID := args[0]
-			var shellOpt string
-			if len(args) > 1 {
-				shellOpt = args[1]
-			}
-			if err := shell(containerID, shellOpt); err != nil {
+			shellArgs := args[1:]
+			if err := shell(containerID, shellArgs); err != nil {
 				log.Fatalf("Failed to start interactive session: %v", err)
 			}
 		},
 	}
-
 	rootCmd.AddCommand(shellCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -295,17 +291,19 @@ func followContainerLogs(containerID string) error {
 	return nil
 }
 
-func shell(containerID string, specifiedShell ...string) error {
+func shell(containerID string, args []string) error {
 	// Fetch EC2 instances for the specified cluster
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}
 
-	// Determine the shell to use
-	shellToUse := "/bin/sh" // default shell
-	if len(specifiedShell) > 0 && specifiedShell[0] != "" {
-		shellToUse = specifiedShell[0]
+	// Set default shell if no arguments are provided
+	var fullCommand string
+	if len(args) == 0 {
+		fullCommand = "/bin/sh"
+	} else {
+		fullCommand = strings.Join(args, " ")
 	}
 
 	// Flag to indicate if the container was found
@@ -328,9 +326,7 @@ func shell(containerID string, specifiedShell ...string) error {
 		// If the container is found on this instance, start an interactive shell session
 		if output != "" {
 			fmt.Printf("Container %s found on instance %s (%s). Starting shell session...\n", containerID, instance.InstanceID, instance.Name)
-			// Start an interactive shell session in the container
-			shellCmd := fmt.Sprintf("sudo docker exec -it %s %s", containerID, shellToUse)
-			err := ssh.SSHInteractiveShell(instance.PrivateIP, shellCmd)
+			err := ssh.SSHInteractiveShell(instance.PrivateIP, containerID, fullCommand)
 			if err != nil {
 				log.Printf("Error starting interactive shell session: %v", err)
 				continue
