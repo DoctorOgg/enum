@@ -17,11 +17,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: 1.20.x
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
+          # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
-          version: "~> v2"
-          args: release --rm-dist
+          # 'latest', 'nightly', or a semver
+          version: '~> v2'
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Your GoReleaser Pro key, if you are using the 'goreleaser-pro' distribution
+          # GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
