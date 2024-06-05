@@ -131,7 +131,7 @@ func main() {
 }
 
 func listEC2Instances() error {
-	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
+	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, false)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}
@@ -146,7 +146,7 @@ func listEC2Instances() error {
 }
 
 func find(searchTerm string) {
-	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
+	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, true)
 	if err != nil {
 		log.Fatalf("Error fetching instances: %v", err)
 	}
@@ -207,7 +207,7 @@ func find(searchTerm string) {
 
 func inspectContainer(containerID string) error {
 	// Fetch the list of EC2 instances in the cluster.
-	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
+	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, true)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}
@@ -249,7 +249,7 @@ func inspectContainer(containerID string) error {
 
 func followContainerLogs(containerID string) error {
 	// Fetch the list of EC2 instances in the cluster.
-	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
+	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, true)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}
@@ -293,7 +293,7 @@ func followContainerLogs(containerID string) error {
 
 func shell(containerID string, args []string) error {
 	// Fetch EC2 instances for the specified cluster
-	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile)
+	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, true)
 	if err != nil {
 		return fmt.Errorf("error fetching EC2 instance data: %v", err)
 	}

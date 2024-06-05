@@ -63,7 +63,7 @@ func ListECSClusters(awsProfile string) error {
 	return nil
 }
 
-func FetchEC2InstanceData(clusterName string, awsProfile string) ([]InstanceData, error) {
+func FetchEC2InstanceData(clusterName string, awsProfile string, onlyRunning bool) ([]InstanceData, error) {
 	var instances []InstanceData
 
 	sess, err := session.NewSessionWithOptions(session.Options{
@@ -122,6 +122,9 @@ func FetchEC2InstanceData(clusterName string, awsProfile string) ([]InstanceData
 					instanceName = *tag.Value
 					break
 				}
+			}
+			if onlyRunning && *instance.State.Name != "running" {
+				continue
 			}
 			instances = append(instances, InstanceData{
 				InstanceID: aws.StringValue(instance.InstanceId),
