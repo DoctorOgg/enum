@@ -231,7 +231,7 @@ func inspectContainer(containerID string) error {
 		}
 
 		// Check if the container is running on the instance.
-		checkCmd := fmt.Sprintf("sudo docker ps --filter \"id=%s\" --format '{{.ID}}'", containerID)
+		checkCmd := fmt.Sprintf("sudo docker ps -a --filter \"id=%s\" --format '{{.ID}}'", containerID)
 		checkOutput, err := ssh.SSHCommand(instance.PrivateIP, checkCmd, false, false)
 		if err != nil {
 			log.Printf("Error checking container on instance %s: %v", instance.InstanceID, err)
@@ -274,7 +274,7 @@ func followContainerLogs(containerID string) error {
 		}
 
 		// Check if the container is running on the instance.
-		checkCmd := fmt.Sprintf("sudo docker ps --filter \"id=%s\" --format '{{.ID}}'", containerID)
+		checkCmd := fmt.Sprintf("sudo docker ps -a --filter \"id=%s\" --format '{{.ID}}'", containerID)
 		checkOutput, err := ssh.SSHCommand(instance.PrivateIP, checkCmd, false, false)
 		if err != nil {
 			log.Printf("Error checking container on instance %s: %v", instance.InstanceID, err)
