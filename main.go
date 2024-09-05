@@ -20,6 +20,7 @@ var (
 	awsProfile                 = "default"
 	ActiveConfig               Config
 )
+var allContainers bool = false
 
 type Config struct {
 	ClusterName string
@@ -70,18 +71,20 @@ func main() {
 	rootCmd.AddCommand(listECSClusters)
 
 	var searchTerm string
+
 	findCmd := &cobra.Command{
 		Use:   "find [search-term]",
-		Short: "Find running containers by search term",
+		Short: "Find running or stopped containers by search term",
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) == 0 {
-				find("")
+				find("", allContainers) // Pass the allContainers flag to the find function
 			} else {
 				searchTerm = args[0]
-				find(searchTerm)
+				find(searchTerm, allContainers) // Pass the allContainers flag to the find function
 			}
 		},
 	}
+	findCmd.Flags().BoolVarP(&allContainers, "all", "a", false, "Include stopped containers") // Add --all flag
 	rootCmd.AddCommand(findCmd)
 
 	inspectCmd := &cobra.Command{
@@ -145,7 +148,7 @@ func listEC2Instances() error {
 	return nil
 }
 
-func find(searchTerm string) {
+func find(searchTerm string, all bool) {
 	instances, err := aws.FetchEC2InstanceData(ActiveConfig.ClusterName, awsProfile, true)
 	if err != nil {
 		log.Fatalf("Error fetching instances: %v", err)
@@ -174,11 +177,21 @@ func find(searchTerm string) {
 		}
 
 		var cmd string
-		if searchTerm == "" {
-			cmd = "sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}'"
+		// Choose the appropriate Docker command based on the --all flag
+		if all {
+			if searchTerm == "" {
+				cmd = "sudo docker ps -a --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}'"
+			} else {
+				cleanedSearchTerm := strings.ReplaceAll(searchTerm, " ", "")
+				cmd = fmt.Sprintf("sudo docker ps -a --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}' | grep '%s'", cleanedSearchTerm)
+			}
 		} else {
-			cleanedSearchTerm := strings.ReplaceAll(searchTerm, " ", "")
-			cmd = fmt.Sprintf("sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}' | grep '%s'", cleanedSearchTerm)
+			if searchTerm == "" {
+				cmd = "sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}'"
+			} else {
+				cleanedSearchTerm := strings.ReplaceAll(searchTerm, " ", "")
+				cmd = fmt.Sprintf("sudo docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.RunningFor}}' | grep '%s'", cleanedSearchTerm)
+			}
 		}
 
 		// Execute the command and collect output
